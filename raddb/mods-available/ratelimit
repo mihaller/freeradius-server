@@ -1,0 +1,12 @@
+# -*- text -*-
+#
+#  $Id$
+
+# RATELIMIT ...
+#
+#  http://www.openldap.org/faq/data/cache/347.html
+ratelimit {
+	period = 2000
+	tokenmax = 15
+	hashsize = 20
+}
