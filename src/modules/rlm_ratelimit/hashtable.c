@@ -3,92 +3,64 @@
 #include <string.h>
 #include "hashtable.h"
 
-typedef int hashi;
+typedef uint64_t hashindex;
 
 static bucketRef *buckets;
 
-hashi hash(const char *key);
+hashindex hash(const char *key);
+static hashindex hash_key(const char* key);
 
-void hashtable_init(u_int32_t hashmax) {
-    INFO("hashtable_init creating hashtable with size %d", hashmax);
-    buckets = calloc(hashmax, sizeof(bucketRef));
+void *hashtable_init(u_int32_t hashmax, size_t bucket_size) {
+	INFO("hashtable_init creating hashtable with %d buckets", hashmax);
+	buckets = calloc(hashmax, bucket_size);
+	maxbuckets = hashmax;
+	return buckets;
 }
 
-void insert(bucketRef value) {
-    int index = hash(value->id);
+void insert(void *datastore, void *value, const char *key) {
+	bucketRef *hashtable = datastore;
+	int index = hash(key);
 
-    INFO("insert into hashtable bucket with key %s at index %d", value->id, index);
-	buckets[index] = value;
+	INFO("insert into hashtable bucket with key %s at index %d", key, index);
+	hashtable[index] = value;
 }
 
+void *lookup(void *datastore, const char *key) {
+	long hash_index;
+	bucketRef *hashtable;
+	INFO("hashtable.c: lookup(key=%s)", key);
 
-bucket* lookup(const char *key) {
-    bucket *b = NULL;
+	hashtable = datastore;
+	hash_index = hash(key);
+	fr_assert(hash_index >= 0 && hash_index < maxbuckets);
 
-    INFO("hashtable.c: lookup(key=%s)", key);
-	for (int i=0; i<maxbuckets; i++) {
-		if (strcmp(buckets[i]->id, key) == 0) {
-			INFO("rate-limit bucket found for %s", key);
-			b = buckets[i];
-			break;
-		}
+	return hashtable[hash_index];
+}
+
+void delete(UNUSED void *datastore, UNUSED const char *key) {
+	ERROR("hashtable->delete: not implemented");
+}
+
+hashindex hash(const char *key) {
+	uint64_t h_key;
+	INFO("hash(%s)", key);
+
+	h_key = hash_key(key);
+	return h_key % maxbuckets;
+}
+
+#define FNV_OFFSET 14695981039346656037UL
+#define FNV_PRIME 1099511628211UL
+
+/*
+ * Return 64-bit FNV-1a hash for key (NUL-terminated). See description:
+ * https://en.wikipedia.org/wiki/Fowler–Noll–Vo_hash_function
+ */
+static hashindex hash_key(const char* key) {
+	hashindex hash = FNV_OFFSET;
+	for (const char* p = key; *p; p++) {
+		hash ^= (uint64_t)(unsigned char)(*p);
+		hash *= FNV_PRIME;
 	}
-    return b;
+	return hash;
 }
-
-
-hashi hash(const char *key) {
-    INFO("hash(%s)", key);
-	maxbuckets++;
-	return maxbuckets-1;
-}
-
-// #define TABLE_SIZE 128
-
-// typedef struct {
-//     unsigned int key;
-//     int value;
-//     struct node* next;
-// } node_t;
-
-// node_t* table[TABLE_SIZE];
-
-// unsigned int hash(unsigned int key) {
-//     return key % TABLE_SIZE;
-// }
-
-// void insert(unsigned int key, int value) {
-//     unsigned int index = hash(key);
-//     node_t* node = malloc(sizeof(node_t));
-//     node->key = key;
-//     node->value = value;
-//     node->next = table[index];
-//     table[index] = node;
-// }
-
-// int lookup(unsigned int key) {
-//     unsigned int index = hash(key);
-//     node_t* current = table[index];
-//     while (current != NULL) {
-//         if (current->key == key) {
-//             return current->value;
-//         }
-//         current = current->next;
-//     }
-//     return -1; // key not found
-// }
-
-// void delete(unsigned int key) {
-//     unsigned int index = hash(key);
-//     node_t** prev = &table[index];
-//     node_t* current = *prev;
-//     while (current != NULL) {
-//         if (current->key == key) {
-//             *prev = current->next;
-//             free(current);
-//             return;
-//         }
-//         prev = &current->next;
-//         current = *prev;
-//     }
-// }

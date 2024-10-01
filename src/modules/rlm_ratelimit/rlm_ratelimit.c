@@ -16,8 +16,9 @@
 
 /**
  * $Id$
+ *
  * @file rlm_ratelimit.c
- * @brief test module code.
+ * @brief Allow FreeRADIUS to rate limit requests.
  *
  * @copyright 2024 The FreeRADIUS server project
  * @copyright 2024 your name \<your address\>
@@ -57,29 +58,17 @@ static int mod_instantiate(UNUSED CONF_SECTION *conf, void *instance)
 
 	if (dict_addattr("ratelimit-Paircmp", -1, 0, PW_TYPE_STRING, flags) < 0) {
 		ERROR("Failed creating paircmp attribute: %s", fr_strerror());
-
 		return -1;
 	}
 
 	paircompare_register(dict_attrbyname("ratelimit-Paircmp"), dict_attrbyvalue(PW_USER_NAME, 0), false,
 			     rlm_ratelimit_cmp, inst);
 
-	/*
-	 *	Log some messages
-	 */
-	INFO("rlm_ratelimit: Informational message");
-	WARN("rlm_ratelimit: Warning message");
-	ERROR("rlm_ratelimit: Error message");
-	DEBUG("rlm_ratelimit: Debug message");
-	DEBUG2("rlm_ratelimit: Debug2 message");
-	DEBUG3("rlm_ratelimit: Debug3 message");
-	DEBUG4("rlm_ratelimit: Debug4 message");
-	AUTH("rlm_ratelimit: Auth message");
-	ACCT("rlm_ratelimit: Acct message");
-	PROXY("rlm_ratelimit: Proxy message");
-
 	/* do something useful */
-	rlm_ratelimit_init(inst->tokenmax, inst->period, 10);
+	inst->datastore = rlm_ratelimit_init(inst->tokenmax, inst->period, inst->hashsize);
+	if (inst->datastore == NULL) {
+		return -1;
+	}
 
 	return 0;
 }
@@ -89,9 +78,11 @@ static int mod_instantiate(UNUSED CONF_SECTION *conf, void *instance)
  *  request for this session exceeds the rate limit.
  *  Return OK/NOP if the request doesn't contain a calling_station_id.
  */
-static rlm_rcode_t CC_HINT(nonnull) mod_authorize(UNUSED void *instance, REQUEST *request)
+static rlm_rcode_t CC_HINT(nonnull) mod_authorize(void *instance, REQUEST *request)
 {
+	rlm_ratelimit_t *inst = instance;
 	VALUE_PAIR *vp;
+
 
     /*
 	 *  retrieve the calling_station_id from the request.
@@ -100,7 +91,7 @@ static rlm_rcode_t CC_HINT(nonnull) mod_authorize(UNUSED void *instance, REQUEST
 		vp = fr_pair_find_by_num(request->packet->vps, PW_CALLING_STATION_ID, 0, TAG_ANY);
 		if (vp) {
 			RDEBUG("request CALLING_STATION_ID: %s", vp->vp_strvalue);
-			if (!rlm_ratelimit_ok(vp->vp_strvalue)) {
+			if (!rlm_ratelimit_ok(inst->datastore, vp->vp_strvalue)) {
 				RINFO("access request for %s rejected due to rate-limiting", vp->vp_strvalue);
 				return RLM_MODULE_REJECT;
 			}

@@ -14,17 +14,12 @@
 #include "hashtable.h"
 #include "rlm_ratelimit.h"
 
-// static int add_bucket(const char *id);
-static bucketRef add_bucket(const char *id);
+static bucketRef add_bucket(void *datastore, const char *id);
 static long current_time_in_ms(void);
-// static int get_bucket(const char *id);
-static bucketRef get_bucket(const char *id);
+static bucketRef get_bucket(void *datastore, const char *id);
 static int tokens_to_add(long elapsed);
-// static void update_used_bucket(bucketRef index);
-static void update_used_bucket(bucket *index);
-// static void update_bucket_tokens(bucketRef index);
-static void update_bucket_tokens(bucketRef b);
-// static bool valid_bucket(bucketRef b);
+static void update_used_bucket(bucket *b);
+static void update_bucket_tokens(bucket *b);
 static bool valid_bucket(bucket *b);
 
 
@@ -32,18 +27,18 @@ static int TOKENMAX;
 static uint update_period; /* ms */
 
 
-void rlm_ratelimit_init(uint32_t tokenmax, uint32_t period, uint32_t hashmax) {
+void *rlm_ratelimit_init(uint32_t tokenmax, uint32_t period, uint32_t hashmax) {
 	TOKENMAX = (int)tokenmax;
 	update_period = period;
 	maxbuckets = 0;
-	hashtable_init(hashmax);
+	return hashtable_init(hashmax, sizeof(bucket));
 }
 
 
 /*
  *  add_bucket creates a new CSID token bucket and returns a reference to it.
  */
-static bucketRef add_bucket(const char *id) {
+static bucketRef add_bucket(void *datastore, const char *id) {
 	/* create a new CSID record */
 	bucketRef csid = malloc(sizeof(bucket));
 	csid->id = id;
@@ -51,7 +46,7 @@ static bucketRef add_bucket(const char *id) {
 	csid->latest = current_time_in_ms();
 	INFO("created bucket for %s. maxbuckets: %d", id, maxbuckets);
 
-	insert(csid);
+	insert(datastore, csid, csid->id);
 	return csid;
 }
 
@@ -59,8 +54,7 @@ static bucketRef add_bucket(const char *id) {
 /*
  *  update_used_bucket decrements the token count and updates last access time
  */
-// static void update_used_bucket(bucketRef index) {
-static void update_used_bucket(bucketRef b) {
+static void update_used_bucket(bucket *b) {
 	if (!valid_bucket(b)) {
 		ERROR("bucket index out of range");
 	}
@@ -73,8 +67,7 @@ static void update_used_bucket(bucketRef b) {
  *  update_bucket_tokens determines if the bucket's tokens can be replinished and
  *  replinishes them up to but not exceeding TOKENMAX.
  */
-// static void update_bucket_tokens(bucketRef b) {
-static void update_bucket_tokens(bucketRef b) {
+static void update_bucket_tokens(bucket *b) {
 	int nTokens;
 	int toks_to_add;
 
@@ -105,7 +98,6 @@ static int tokens_to_add(long elapsed) {
 /*
  *  valid_bucket return true if the bucketRef is valid
  */
-// static bool valid_bucket(bucketRef b) {
 static bool valid_bucket(bucket *b) {
 	if (b != NULL) {
 		return true;
@@ -119,16 +111,16 @@ static bool valid_bucket(bucket *b) {
  *  doesn't exist a new bucket is created and a reference to the new bucket is
  *  returned.
  */
-static bucket* get_bucket(const char *id) {
+static bucket* get_bucket(void *datastore, const char *id) {
 	bucket *b = NULL;
 
 	INFO("get_bucket(%s)", id);
-	b = lookup(id);
+	b = lookup(datastore, id);
 
 	/* bucket for ID doesn't exist. Add one. */
 	if (!b) {
 		INFO("get_bucket: bucket not found. Creating: %s", id);
-		b = add_bucket(id);
+		b = add_bucket(datastore, id);
 	}
 
 	return b;
@@ -139,12 +131,12 @@ static bucket* get_bucket(const char *id) {
  *  rlm_ratelimit_ok returns true if the rate limit for the session reference id hasn't
  *  been exceeded.
  */
-bool rlm_ratelimit_ok(const char *id) {
+bool rlm_ratelimit_ok(void *datastore, const char *id) {
 	bucketRef b;
 
 	INFO("Checking rate limit for %s", id);
 
-	b = get_bucket(id);
+	b = get_bucket(datastore, id);
 	INFO("rlm_ratelimit_ok: calling update_bucket_tokens for %s", b->id);
 	update_bucket_tokens(b);
 	// if (buckets[b].tokens <= 0) {
