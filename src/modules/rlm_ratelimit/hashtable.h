@@ -27,18 +27,9 @@ RCSIDH(hashtable_h, "$Id$")
 
 #include <freeradius-devel/radiusd.h>
 
-// #define BUCKETSIZEMAX 10
+typedef void* hashtable;
 
-typedef struct bucket {
-	const char *id;
-	int tokens;
-	long latest;
-} bucket;
-
-static int maxbuckets; /* top of the buckets stack*/
-typedef bucket* bucketRef;
-
-void *hashtable_init(u_int32_t hashmax, size_t bucket_size);
+void *hashtable_init(size_t element_size, u_int32_t hashmax);
 void insert(void *datastore, void *value, const char *key);
 void *lookup(void *datastore, const char *key);
 void delete(void *datastore, const char *key);

@@ -18,7 +18,7 @@
 /**
  * $Id$
  *
- * @file rlm_ratelimit.c
+ * @file rlm_ratelimit.h
  * @brief Allow FreeRADIUS to rate limit requests.
  *
  * @copyright 2024 The FreeRADIUS server project
@@ -45,7 +45,6 @@ typedef struct rlm_ratelimit_t {
 	void *datastore;
 } rlm_ratelimit_t;
 
-
 /**
  *	A mapping of configuration parameter to internal variables.
  */
@@ -55,7 +54,3 @@ static const CONF_PARSER module_config[] = {
 	{ "hashsize", FR_CONF_OFFSET(PW_TYPE_INTEGER, rlm_ratelimit_t, hashsize), "20" },
 	CONF_PARSER_TERMINATOR
 };
-
-void *rlm_ratelimit_init(uint32_t tokenmax, uint32_t period, uint32_t hashsize);
-bool rlm_ratelimit_ok(void *datastore, const char *id);
-

@@ -5,43 +5,45 @@
 
 typedef uint64_t hashindex;
 
-static bucketRef *buckets;
+static int maxbuckets; /* number of buckets */
 
-hashindex hash(const char *key);
+static hashindex hash(const char *key);
 static hashindex hash_key(const char* key);
 
-void *hashtable_init(u_int32_t hashmax, size_t bucket_size) {
-	INFO("hashtable_init creating hashtable with %d buckets", hashmax);
-	buckets = calloc(hashmax, bucket_size);
+hashtable hashtable_init(size_t element_size, u_int32_t hashmax) {
+	hashtable h;
+
+	DEBUG("ratelimit: hashtable_init creating hashtable with %d buckets", hashmax);
+	h = talloc_array_size(NULL, element_size, hashmax);
 	maxbuckets = hashmax;
-	return buckets;
+	return h;
 }
 
 void insert(void *datastore, void *value, const char *key) {
-	bucketRef *hashtable = datastore;
+	hashtable *htable = datastore;
 	int index = hash(key);
 
 	INFO("insert into hashtable bucket with key %s at index %d", key, index);
-	hashtable[index] = value;
+	DEBUG("This is a debug message for when user is bob");
+	htable[index] = talloc_steal(datastore, value);
 }
 
 void *lookup(void *datastore, const char *key) {
 	long hash_index;
-	bucketRef *hashtable;
+	hashtable *htable;
 	INFO("hashtable.c: lookup(key=%s)", key);
 
-	hashtable = datastore;
+	htable = datastore;
 	hash_index = hash(key);
 	fr_assert(hash_index >= 0 && hash_index < maxbuckets);
-
-	return hashtable[hash_index];
+	return htable[hash_index];
 }
 
 void delete(UNUSED void *datastore, UNUSED const char *key) {
 	ERROR("hashtable->delete: not implemented");
 }
 
-hashindex hash(const char *key) {
+static hashindex hash(const char *key) {
 	uint64_t h_key;
 	INFO("hash(%s)", key);
 
