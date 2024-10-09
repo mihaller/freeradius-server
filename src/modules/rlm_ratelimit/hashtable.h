@@ -27,9 +27,15 @@ RCSIDH(hashtable_h, "$Id$")
 
 #include <freeradius-devel/radiusd.h>
 
-typedef void* hashtable;
+typedef struct Hashentry {
+    void *value;
+} Hashentry;
 
-void *hashtable_init(size_t element_size, u_int32_t hashmax);
-void insert(void *datastore, void *value, const char *key);
-void *lookup(void *datastore, const char *key);
-void delete(void *datastore, const char *key);
+typedef struct HashTable {
+    Hashentry *table;
+} HashTable;
+
+HashTable *hashtable_init(size_t element_size, u_int32_t hashmax);
+void insert(HashTable *datastore, void *value, const char *key);
+void *lookup(HashTable *datastore, const char *key);
+void delete(HashTable *datastore, const char *key);
