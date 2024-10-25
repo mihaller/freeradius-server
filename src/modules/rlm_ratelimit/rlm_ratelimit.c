@@ -50,15 +50,20 @@ static uint numbuckets; /* TODO: used for debugging. Remove? */
 
 
 /*
- * ratelimit_init_datastore
+ * ratelimit_init_datastore calls hashtable_init to create and return a backend datastore.
  */
 static void *ratelimit_init_datastore(rlm_ratelimit_t *instance) {
-	return hashtable_init(sizeof(bucket), instance->hashsize);
+	if (strcmp(instance->backend, "hashtbable") == 0) {
+		return hashtable_init(instance->hashsize);
+	} else {
+		INFO("ratelimit: using a fix size array");
+		return hashtable_init(instance->hashsize);
+	}
 }
 
 
 /*
- *  add_bucket creates a new CSID token bucket and returns a reference to it.
+ *  add_bucket creates a new CSID token bucket, insert it into the datastore and returns a reference to it.
  */
 static bucketRef add_bucket(rlm_ratelimit_t *inst, const char *id) {
 	/* create a new CSID record */
@@ -152,7 +157,7 @@ bucket* get_bucket(rlm_ratelimit_t *inst, const char *id) {
 	b = lookup(inst->datastore, id);
 
 	/* bucket for ID doesn't exist. Add one. */
-	if (!b) {
+	if (b == NULL) {
 		DEBUG("get_bucket: bucket not found. Adding bucket: %s", id);
 		b = add_bucket(inst, id);
 	} else {
@@ -178,6 +183,9 @@ static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id) {
 	DEBUG("ratelimit_ok(): Checking rate limit for %s", id);
 
 	b = get_bucket(inst, id);
+
+	INFO("bucket before: %s %d", b->id, b->tokens);
+
 	update_bucket_tokens(b, inst->tokenmax, inst->period);
 	if (b->tokens <= 0) {
 		INFO("rate-limit for %s exceeded", id);
@@ -186,6 +194,7 @@ static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id) {
 
 	/* the request is within limits - update the bucket and return "OK" */
 	update_used_bucket(b);
+	INFO("bucket after: %s %d", b->id, b->tokens);
 	return true;
 }
 

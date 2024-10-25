@@ -41,6 +41,7 @@ typedef struct rlm_ratelimit_t {
 	uint32_t tokenmax;
 	uint32_t period;
 	uint32_t hashsize;
+	const char* backend;
 
 	void *datastore;
 } rlm_ratelimit_t;
@@ -52,5 +53,6 @@ static const CONF_PARSER module_config[] = {
 	{ "tokenmax", FR_CONF_OFFSET(PW_TYPE_INTEGER, rlm_ratelimit_t, tokenmax), "10" },
 	{ "period", FR_CONF_OFFSET(PW_TYPE_INTEGER, rlm_ratelimit_t, period), "5000" },
 	{ "hashsize", FR_CONF_OFFSET(PW_TYPE_INTEGER, rlm_ratelimit_t, hashsize), "20" },
+	{ "backend", FR_CONF_OFFSET(PW_TYPE_STRING, rlm_ratelimit_t, backend), "hashtable" },
 	CONF_PARSER_TERMINATOR
 };
