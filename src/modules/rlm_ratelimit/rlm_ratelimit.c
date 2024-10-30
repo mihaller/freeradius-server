@@ -34,10 +34,10 @@ static void *ratelimit_init_datastore(rlm_ratelimit_t *instance);
 static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id);
 static Bucket* get_bucket(rlm_ratelimit_t *inst, const char *id);
 static bucketRef add_bucket(rlm_ratelimit_t *inst, const char *id);
-static uint32_t current_time_in_sec(void);
-static int tokens_to_add(uint32_t elapsed, uint32_t update_period);
+static uint64_t current_time_in_sec(void);
+static uint tokens_to_add(uint64_t elapsed, uint32_t refreshrate);
 static bool valid_bucket(Bucket *b);
-static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t period);
+static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refreshrate);
 static void update_used_bucket(Bucket *b);
 
 static uint numbuckets; /* TODO: used for debugging. Remove? */
@@ -51,7 +51,6 @@ static void *ratelimit_init_datastore(rlm_ratelimit_t *instance) {
 	return datastore_init(instance->datastoresize);
 }
 
-
 /*
  *  add_bucket creates a new CSID token bucket, insert it into the datastore and returns a reference to it.
  */
@@ -64,7 +63,6 @@ static bucketRef add_bucket(rlm_ratelimit_t *inst, const char *id) {
 	return insert(inst->datastore, b, id);
 }
 
-
 /*
  *  update_used_bucket decrements the token count and updates last access time
  */
@@ -76,13 +74,12 @@ static void update_used_bucket(Bucket *b) {
 	b->accessed = current_time_in_sec();
 }
 
-
 /*
  *  update_bucket_tokens determines if the bucket's tokens can be replenished. If so,
  *  it is replenished up to, but not exceeding, TOKENMAX.
  */
-static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t period) {
-	int nTokens;
+static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refreshrate) {
+	uint nTokens;
 	uint32_t toks_to_add;
 
 	if (!valid_bucket(b)) {
@@ -90,19 +87,19 @@ static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t period)
 		return;
 	}
 
-	nTokens = tokens_to_add(current_time_in_sec() - b->accessed, period);
-	toks_to_add = (b->tokens+nTokens <= (int) maxtokens) ? b->tokens+nTokens : maxtokens;
+	nTokens = tokens_to_add(current_time_in_sec() - b->accessed, refreshrate);
+	INFO("ratelimit: update_bucket_tokens() - nTokens: %d", nTokens);
+	toks_to_add = (b->tokens+nTokens <= (uint) maxtokens) ? b->tokens+nTokens : maxtokens;
 	b->tokens = toks_to_add;
 }
-
 
 /*
  *  tokens_to_add returns the number of tokens to add for the elapse time for the update_period
  */
-static int tokens_to_add(uint32_t elapsed, uint32_t update_period) {
-	return elapsed / update_period;
+static uint tokens_to_add(uint64_t elapsed, uint32_t refreshrate) {
+	INFO("ratelimit: tokens_to_add elapsed: %llu refreshrate %d", elapsed, refreshrate);
+	return elapsed / refreshrate;
 }
-
 
 /*
  *  valid_bucket return true if the bucketRef is valid
@@ -114,19 +111,14 @@ static bool valid_bucket(Bucket *b) {
 	return false;
 }
 
-
 /*
  *  current_time_in_sec returns the current time in seconds since UNIX Epoch.
  */
-static uint32_t current_time_in_sec(void) {
+static uint64_t current_time_in_sec(void) {
     struct timespec ts;
-	uint32_t secs;
     clock_gettime(CLOCK_REALTIME, &ts);
-
-    secs = ts.tv_sec;
-    return secs;
+    return ts.tv_sec;
 }
-
 
 /*
  *  get_bucket returns a reference to the token bucket with the specified id. If the id
@@ -147,7 +139,7 @@ static Bucket* get_bucket(rlm_ratelimit_t *inst, const char *id) {
 
 	}
 
-	INFO("ratelimit: getbucket() %s %d %d", id, b->tokens, b->accessed);
+	INFO("ratelimit: getbucket() %s %d %llu", id, b->tokens, b->accessed);
 	return b;
 }
 
@@ -163,7 +155,7 @@ static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id) {
 
 	INFO("bucket before: %s %d", id, b->tokens);
 
-	update_bucket_tokens(b, inst->tokenmax, inst->datastoresize);
+	update_bucket_tokens(b, inst->tokenmax, inst->refreshrate);
 	if (b->tokens <= 0) {
 		INFO("rate-limit for %s exceeded", id);
 		return false;
@@ -240,7 +232,6 @@ static rlm_rcode_t CC_HINT(nonnull) mod_checksimul(UNUSED void *instance, REQUES
 	return RLM_MODULE_OK;
 }
 #endif
-
 
 /*
  *	Only free memory we allocated.  The strings allocated via

@@ -29,7 +29,7 @@ RCSIDH(fixedds_h, "$Id$")
 
 typedef struct Bucket {
     uint8_t tokens;
-    uint32_t accessed;
+    uint64_t accessed;
 } Bucket;
 
 typedef struct BucketList {

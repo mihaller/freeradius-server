@@ -6,7 +6,7 @@
 #
 #  http://www.openldap.org/faq/data/cache/347.html
 ratelimit {
-	refreshrate = 2
+	refreshrate = 10
 	tokenmax = 5
 #	datastorelength = 2000000
 	datastorelength = 16777216
