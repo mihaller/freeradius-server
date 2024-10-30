@@ -4,7 +4,7 @@ ifneq "$(TARGETNAME)" ""
 TARGET		:= $(TARGETNAME).a
 endif
 
-SOURCES		:= $(TARGETNAME).c hashtable.c
+SOURCES		:= $(TARGETNAME).c fixedds.c
 
 SRC_CFLAGS	:=
 TGT_LDLIBS	:=

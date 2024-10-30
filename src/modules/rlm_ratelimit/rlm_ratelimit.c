@@ -25,26 +25,20 @@
  */
 RCSID("$Id$")
 
-#include "hashtable.h"
+#include "fixedds.h"
 #include "rlm_ratelimit.h"
 
-typedef struct bucket {
-	const char *id;
-	int tokens;
-	long latest;
-} bucket;
-
-typedef bucket* bucketRef;
+typedef Bucket* bucketRef;
 
 static void *ratelimit_init_datastore(rlm_ratelimit_t *instance);
 static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id);
-bucket* get_bucket(rlm_ratelimit_t *inst, const char *id);
+static Bucket* get_bucket(rlm_ratelimit_t *inst, const char *id);
 static bucketRef add_bucket(rlm_ratelimit_t *inst, const char *id);
-static long current_time_in_ms(void);
-static int tokens_to_add(long elapsed, u_int32_t update_period);
-static bool valid_bucket(bucket *b);
-void update_bucket_tokens(bucket *b, u_int32_t maxtokens, u_int32_t period);
-void update_used_bucket(bucket *b);
+static uint32_t current_time_in_sec(void);
+static int tokens_to_add(uint32_t elapsed, uint32_t update_period);
+static bool valid_bucket(Bucket *b);
+static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t period);
+static void update_used_bucket(Bucket *b);
 
 static uint numbuckets; /* TODO: used for debugging. Remove? */
 
@@ -53,12 +47,8 @@ static uint numbuckets; /* TODO: used for debugging. Remove? */
  * ratelimit_init_datastore calls hashtable_init to create and return a backend datastore.
  */
 static void *ratelimit_init_datastore(rlm_ratelimit_t *instance) {
-	if (strcmp(instance->backend, "hashtbable") == 0) {
-		return hashtable_init(instance->hashsize);
-	} else {
-		INFO("ratelimit: using a fix size array");
-		return hashtable_init(instance->hashsize);
-	}
+	INFO("ratelimit: using a fix size array");
+	return datastore_init(instance->datastoresize);
 }
 
 
@@ -66,29 +56,24 @@ static void *ratelimit_init_datastore(rlm_ratelimit_t *instance) {
  *  add_bucket creates a new CSID token bucket, insert it into the datastore and returns a reference to it.
  */
 static bucketRef add_bucket(rlm_ratelimit_t *inst, const char *id) {
-	/* create a new CSID record */
+	Bucket b;
 
-	bucket *csid = talloc(NULL, bucket);
-	csid->id = talloc_strdup(csid, id);
-	csid->tokens = inst->tokenmax;
-	csid->latest = current_time_in_ms();
-
+	b.tokens = inst->tokenmax;
+	b.accessed = current_time_in_sec();
 	DEBUG("ratelimit: add_bucket() created bucket for ID %s. Total allocated buckets: %d", id, ++numbuckets);
-
-	insert(inst->datastore, csid, csid->id);
-	return csid;
+	return insert(inst->datastore, b, id);
 }
 
 
 /*
  *  update_used_bucket decrements the token count and updates last access time
  */
-void update_used_bucket(bucket *b) {
+static void update_used_bucket(Bucket *b) {
 	if (!valid_bucket(b)) {
 		ERROR("bucket index out of range");
 	}
 	b->tokens--;
-	b->latest = current_time_in_ms();
+	b->accessed = current_time_in_sec();
 }
 
 
@@ -96,20 +81,17 @@ void update_used_bucket(bucket *b) {
  *  update_bucket_tokens determines if the bucket's tokens can be replenished. If so,
  *  it is replenished up to, but not exceeding, TOKENMAX.
  */
-void update_bucket_tokens(bucket *b, u_int32_t maxtokens, u_int32_t period) {
+static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t period) {
 	int nTokens;
-	u_int32_t toks_to_add;
+	uint32_t toks_to_add;
 
 	if (!valid_bucket(b)) {
 		WARN("update_bucket_tokens: invalid bucket");
 		return;
 	}
 
-	INFO("update_bucket_tokens(bucket %s)", b->id);
-
-	nTokens = tokens_to_add(current_time_in_ms() - b->latest, period);
+	nTokens = tokens_to_add(current_time_in_sec() - b->accessed, period);
 	toks_to_add = (b->tokens+nTokens <= (int) maxtokens) ? b->tokens+nTokens : maxtokens;
-	DEBUG("setting tokens to %d to %s bucket", toks_to_add, b->id);
 	b->tokens = toks_to_add;
 }
 
@@ -117,7 +99,7 @@ void update_bucket_tokens(bucket *b, u_int32_t maxtokens, u_int32_t period) {
 /*
  *  tokens_to_add returns the number of tokens to add for the elapse time for the update_period
  */
-static int tokens_to_add(long elapsed, u_int32_t update_period) {
+static int tokens_to_add(uint32_t elapsed, uint32_t update_period) {
 	return elapsed / update_period;
 }
 
@@ -125,7 +107,7 @@ static int tokens_to_add(long elapsed, u_int32_t update_period) {
 /*
  *  valid_bucket return true if the bucketRef is valid
  */
-static bool valid_bucket(bucket *b) {
+static bool valid_bucket(Bucket *b) {
 	if (b != NULL) {
 		return true;
 	}
@@ -134,15 +116,15 @@ static bool valid_bucket(bucket *b) {
 
 
 /*
- *  current_time_in_ms returns the current time in milliseconds
+ *  current_time_in_sec returns the current time in seconds since UNIX Epoch.
  */
-static long current_time_in_ms(void) {
+static uint32_t current_time_in_sec(void) {
     struct timespec ts;
-	long ms;
+	uint32_t secs;
     clock_gettime(CLOCK_REALTIME, &ts);
 
-    ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-    return ms;
+    secs = ts.tv_sec;
+    return secs;
 }
 
 
@@ -151,8 +133,8 @@ static long current_time_in_ms(void) {
  *  doesn't exist a new bucket is created and a reference to the new bucket is
  *  returned.
  */
-bucket* get_bucket(rlm_ratelimit_t *inst, const char *id) {
-	bucket *b = NULL;
+static Bucket* get_bucket(rlm_ratelimit_t *inst, const char *id) {
+	Bucket *b = NULL;
 
 	b = lookup(inst->datastore, id);
 
@@ -161,15 +143,11 @@ bucket* get_bucket(rlm_ratelimit_t *inst, const char *id) {
 		DEBUG("get_bucket: bucket not found. Adding bucket: %s", id);
 		b = add_bucket(inst, id);
 	} else {
-		// check if the datastore is already filled at that position
-		// if so, replace the bucket with the new bucket
-		// this means releasing the memory for the existing bucket at that index
-		// and adding the new bucket.
-		if (strcmp(b->id, id) != 0) {
-			WARN("ratelimit: retrieved bucket (%s) doesn't match expected (%s)", b->id, id);
-		}
+		WARN("ratelimit: bucket for %s already exists", id);
+
 	}
 
+	INFO("ratelimit: getbucket() %s %d %d", id, b->tokens, b->accessed);
 	return b;
 }
 
@@ -177,16 +155,15 @@ bucket* get_bucket(rlm_ratelimit_t *inst, const char *id) {
  *  ratelimit_ok returns true if the rate limit hasn't been exceeded.
  */
 static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id) {
-	// bucketRef b;
-	bucket *b;
+	Bucket *b;
 
 	DEBUG("ratelimit_ok(): Checking rate limit for %s", id);
 
 	b = get_bucket(inst, id);
 
-	INFO("bucket before: %s %d", b->id, b->tokens);
+	INFO("bucket before: %s %d", id, b->tokens);
 
-	update_bucket_tokens(b, inst->tokenmax, inst->period);
+	update_bucket_tokens(b, inst->tokenmax, inst->datastoresize);
 	if (b->tokens <= 0) {
 		INFO("rate-limit for %s exceeded", id);
 		return false;
@@ -194,7 +171,7 @@ static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id) {
 
 	/* the request is within limits - update the bucket and return "OK" */
 	update_used_bucket(b);
-	INFO("bucket after: %s %d", b->id, b->tokens);
+	INFO("bucket after: %s %d", id, b->tokens);
 	return true;
 }
 
@@ -220,16 +197,14 @@ static int mod_instantiate(UNUSED CONF_SECTION *conf, void *instance) {
 	DEBUG3("This is a DEBUG3 message in mod_instantiate for when user is bob");
 
 	/* trivial sanity check on config values passed in */
-	rad_assert(inst->hashsize > 0);
+	rad_assert(inst->datastoresize > 0);
 	rad_assert(inst->tokenmax > 0);
-	rad_assert(inst->period > 0);
+	rad_assert(inst->refreshrate > 0);
 
 	inst->datastore = ratelimit_init_datastore(inst);
 	if (inst->datastore == NULL) {
 		return -1;
 	}
-
-	// ratelimit_init(inst->tokenmax, inst->period, inst->hashsize);
 
 	return 0;
 }
