@@ -35,6 +35,7 @@ static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id);
 static Bucket* get_bucket(rlm_ratelimit_t *inst, const char *id);
 static bucketRef add_bucket(rlm_ratelimit_t *inst, const char *id);
 static uint64_t current_time_in_sec(void);
+static const char *id_from_request(REQUEST *request, char* buffer, uint bsize);
 static uint tokens_to_add(uint64_t elapsed, uint32_t refreshrate);
 static bool valid_bucket(Bucket *b);
 static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refreshrate);
@@ -255,6 +256,22 @@ static int mod_detach(void *instance) {
 	return 0;
 }
 
+static const char *id_from_request(REQUEST *request, char *buffer, uint bsize) {
+	VALUE_PAIR *vp;
+	const char *id = NULL;
+
+	vp = fr_pair_find_by_num(request->packet->vps, PW_CALLING_STATION_ID, 0, TAG_ANY);
+	if (vp) {
+		RDEBUG("request identifier: %s", vp->vp_strvalue);
+		id = vp->vp_strvalue;
+	} else {
+		RDEBUG("calling_station_id not in request. Falling back to client IP");
+		id = inet_ntop(request->packet->src_ipaddr.af, &request->packet->src_ipaddr.ipaddr, buffer, bsize);
+	}
+
+	return id;
+}
+
 /*
  *	Retrieve the calling_station_id from the request and return a RLM_MODULE_REJECT if the
  *  request for this session exceeds the rate limit.
@@ -262,7 +279,7 @@ static int mod_detach(void *instance) {
  */
 static rlm_rcode_t CC_HINT(nonnull) mod_pre_proxy(void *instance, REQUEST *request) {
 	rlm_ratelimit_t *inst = instance;
-	VALUE_PAIR *vp;
+	const char *id;
 
 	RDEBUG2("mod_pre_proxy()");
 
@@ -270,16 +287,17 @@ static rlm_rcode_t CC_HINT(nonnull) mod_pre_proxy(void *instance, REQUEST *reque
 	 *  retrieve the calling_station_id from the request.
 	 */
 	if (request->packet->code == PW_CODE_ACCESS_REQUEST) {
-		vp = fr_pair_find_by_num(request->packet->vps, PW_CALLING_STATION_ID, 0, TAG_ANY);
-		if (vp) {
-			RDEBUG("request CALLING_STATION_ID: %s", vp->vp_strvalue);
-			// if (!ratelimit_ok(inst->datastore, vp->vp_strvalue)) {
-			if (!ratelimit_ok(inst, vp->vp_strvalue)) {
-				RINFO("access request for %s rejected due to rate-limiting", vp->vp_strvalue);
+		char buffer[128];
+		id = id_from_request(request, buffer, sizeof(buffer));
+		INFO("ratelimit: id returned from request: %s", id);
+		if (id != NULL) {
+			RDEBUG("request identifier: %s", id);
+			if (!ratelimit_ok(inst, id)) {
+				RINFO("access request for %s rejected due to rate-limiting", id);
 				return RLM_MODULE_REJECT;
 			}
 		} else {
-			RDEBUG("calling_station_id not contained in the request");
+			RDEBUG("neither calling_station_id nor client_IP contained in the request");
 		}
 	}
 

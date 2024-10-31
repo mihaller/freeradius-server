@@ -37,5 +37,5 @@ typedef struct BucketList {
 } BucketList;
 
 void *datastore_init(uint32_t listlength);
-Bucket *insert(void *datastore, Bucket data, const char *key);
-Bucket *lookup(void *datastore, const char *key);
+Bucket *insert(void *datastore, Bucket data, const char *id);
+Bucket *lookup(void *datastore, const char *id);
