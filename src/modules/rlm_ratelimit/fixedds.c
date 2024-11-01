@@ -32,10 +32,10 @@ static int index_from_id(RatelimitID id, uint32_t *index);
 void *datastore_init(uint32_t listlength) {
     BucketList *b;
 
-    INFO("ratelimit: datastore_init(). Creating bucket store with capacity %d.", listlength);
+    INFO("ratelimit: datastore_init(): creating bucket store with capacity %d.", listlength);
 	b = talloc(NULL, BucketList);
 	b->buckets = (Bucket *) talloc_array_size(b, sizeof(Bucket), listlength);
-    INFO("ratelimit: datastore_init() - storage allocated: %ld bytes", talloc_total_size(b));
+    INFO("ratelimit: datastore_init(): storage allocated: %ld bytes", talloc_total_size(b));
 	for (uint32_t i=0; i<listlength; i++) {
 		b->buckets[i].accessed = 0;
 	}
@@ -49,14 +49,12 @@ Bucket *insert(void *datastore, Bucket data, RatelimitID id) {
     BucketList *list = datastore;
 	uint32_t index;
 
-    INFO("ratelimit: Hello from datastore insert()");
     list = datastore;
-
     if (index_from_id(id, &index) == -1) {
         return NULL;
     }
 
-    INFO("ratelimit: value will be inserted at index %d", index);
+    DEBUG("ratelimit: insert(): id %s inserted at index %d", id.key, index);
 
     list->buckets[index].tokens = data.tokens;
     list->buckets[index].accessed = data.accessed;
@@ -73,12 +71,10 @@ Bucket *lookup(void *datastore, RatelimitID id) {
 
     list = datastore;
 
-    INFO("ratelimit: Hello from datastroe lookup()()");
 	if (index_from_id(id, &index) == -1) {
+        WARN("ratelimit: lookup(): bucket not found for id %s", id.key);
         return NULL;
     }
-    INFO("ratelimit: return from index_from_id() %s %d %x", id.key, index, index);
-    printf("ratelimt: index from id %s\n", id.key);
     return &(list->buckets[index]);
 }
 
@@ -89,8 +85,6 @@ Bucket *lookup(void *datastore, RatelimitID id) {
 static int index_from_id(RatelimitID id, uint32_t *index) {
     uint values[8];
     uint64_t int_val;
-
-    INFO("ratelimit: index_from_id()");
 
     switch (id.key_type) {
         case MACADDR:
@@ -123,6 +117,6 @@ static int index_from_id(RatelimitID id, uint32_t *index) {
             break;
     }
 
-    INFO("ratelimit: invalid id %s", id.key);
-    return -1; // Invalid MAC address string
+    INFO("ratelimit: index_from_id(): invalid id %s", id.key);
+    return -1;
 }

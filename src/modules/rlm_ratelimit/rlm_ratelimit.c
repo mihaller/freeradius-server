@@ -30,12 +30,13 @@ RCSID("$Id$")
 
 typedef Bucket* bucketRef;
 
-static void *ratelimit_init_datastore(rlm_ratelimit_t *instance);
-static bool ratelimit_ok(rlm_ratelimit_t *inst, RatelimitID id);
-static Bucket* get_bucket(rlm_ratelimit_t *inst, RatelimitID id);
 static bucketRef add_bucket(rlm_ratelimit_t *inst, RatelimitID id);
 static uint64_t current_time_in_sec(void);
+static Bucket* get_bucket(rlm_ratelimit_t *inst, RatelimitID id);
 static int id_from_request(RatelimitID *id, REQUEST *request, char* buffer, uint bsize);
+static void log_ratelimit(RatelimitID id);
+static void *ratelimit_init_datastore(rlm_ratelimit_t *instance);
+static bool ratelimit_ok(rlm_ratelimit_t *inst, RatelimitID id);
 static uint tokens_to_add(uint64_t elapsed, uint32_t refreshrate);
 static bool valid_bucket(Bucket *b);
 static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refreshrate);
@@ -69,7 +70,7 @@ static bucketRef add_bucket(rlm_ratelimit_t *inst, RatelimitID id) {
  */
 static void update_used_bucket(Bucket *b) {
 	if (!valid_bucket(b)) {
-		ERROR("bucket index out of range");
+		ERROR("ratelimit: update_used_bucket(): bucket index out of range");
 	}
 	b->tokens--;
 	b->accessed = current_time_in_sec();
@@ -84,12 +85,12 @@ static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refresh
 	uint32_t toks_to_add;
 
 	if (!valid_bucket(b)) {
-		WARN("update_bucket_tokens: invalid bucket");
+		ERROR("ratelimit: update_bucket_tokens(): invalid bucket");
 		return;
 	}
 
 	nTokens = tokens_to_add(current_time_in_sec() - b->accessed, refreshrate);
-	INFO("ratelimit: update_bucket_tokens() - nTokens: %d", nTokens);
+	DEBUG("ratelimit: update_bucket_tokens(): nTokens: %d", nTokens);
 	toks_to_add = (b->tokens+nTokens <= (uint) maxtokens) ? b->tokens+nTokens : maxtokens;
 	b->tokens = toks_to_add;
 }
@@ -98,7 +99,7 @@ static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refresh
  * tokens_to_add returns the number of tokens to add for the elapse time for the update_period
  */
 static uint tokens_to_add(uint64_t elapsed, uint32_t refreshrate) {
-	INFO("ratelimit: tokens_to_add elapsed: %llu refreshrate %d", elapsed, refreshrate);
+	DEBUG("ratelimit: tokens_to_add(): elapsed: %llu refreshrate %d", elapsed, refreshrate);
 	return elapsed / refreshrate;
 }
 
@@ -133,61 +134,51 @@ static Bucket* get_bucket(rlm_ratelimit_t *inst, RatelimitID id) {
 
 	/* bucket for ID doesn't exist. Add one. */
 	if (b == NULL) {
-		DEBUG("get_bucket: bucket not found. Adding bucket: %s", id.key);
+		DEBUG("ratelimit: get_bucket(): bucket not found. Adding bucket: %s", id.key);
 		b = add_bucket(inst, id);
-	} else {
-		WARN("ratelimit: bucket for %s already exists", id.key);
-
 	}
 
-	INFO("ratelimit: getbucket() %s %d %llu", id.key, b->tokens, b->accessed);
+	DEBUG("ratelimit: getbucket(): %s %d %llu", id.key, b->tokens, b->accessed);
 	return b;
 }
 
 /*
- * ratelimit_ok returns true if the rate limit hasn't been exceeded.
+ * ratelimit_ok returns true if the rate limit for RatelimitID hasn't been exceeded.
  */
 static bool ratelimit_ok(rlm_ratelimit_t *inst, RatelimitID id) {
 	Bucket *b;
 
-	DEBUG("ratelimit_ok(): Checking rate limit for %s", id.key);
+	DEBUG("ratelimit: ratelimit_ok(): checking rate limit for %s", id.key);
 
+	/*
+	 * get the bucket for id. Update tokens to account for elapsed time since it
+	 * it was last accessed. Return false if the bucket has run out of tokens.
+	 */
 	b = get_bucket(inst, id);
-
-	INFO("bucket before: %s %d", id.key, b->tokens);
-
 	update_bucket_tokens(b, inst->tokenmax, inst->refreshrate);
 	if (b->tokens <= 0) {
-		INFO("rate-limit for %s exceeded", id.key);
 		return false;
 	}
 
-	/* the request is within limits - update the bucket and return "OK" */
+	/* the request is within limits - update the bucket and return "OK" (true) */
 	update_used_bucket(b);
-	INFO("bucket after: %s %d", id.key, b->tokens);
 	return true;
 }
 
 /*
- * Do any per-module initialization that is separate to each
- * configured instance of the module.  e.g. set up connections
- * to external databases, read configuration files, set up
- * dictionary entries, etc.
- *
+ * log_ratelimit logs the ratelimit event for the RatelimitID.
+ */
+static void log_ratelimit(RatelimitID id) {
+	WARN("ratelimit: request id %s ratelimited", id.key);
+}
+
+/*
  * If configuration information is given in the config section
  * that must be referenced in later calls, store a handle to it
  * in *instance otherwise put a null pointer there.
  */
 static int mod_instantiate(UNUSED CONF_SECTION *conf, void *instance) {
 	rlm_ratelimit_t *inst = instance;
-
-	/* TODO - remove the following after testing */
-	INFO("This is a INFO message in mod_instantiate. Remove after tetsing.");
-	WARN("This is a WARN message in mod_instantiate for when user is bob");
-	ERROR("This is a ERROR message in mod_instantiate for when user is bob");
-	DEBUG("This is a DEBUG message in mod_instantiate for when user is bob");
-	DEBUG2("This is a DEBUG2 message in mod_instantiate for when user is bob");
-	DEBUG3("This is a DEBUG3 message in mod_instantiate for when user is bob");
 
 	/* trivial sanity check on config values passed in */
 	rad_assert(inst->datastoresize > 0);
@@ -303,21 +294,18 @@ static rlm_rcode_t CC_HINT(nonnull) mod_pre_proxy(void *instance, REQUEST *reque
 	int ok;
 	RatelimitID id;
 
-	RDEBUG2("mod_pre_proxy()");
-
     /* retrieve the calling_station_id from the request */
 	if (request->packet->code == PW_CODE_ACCESS_REQUEST) {
 		char buffer[128];
 		ok = id_from_request(&id, request, buffer, sizeof(buffer));
-		INFO("ratelimit: id returned from request: %s", id.key);
 		if (ok == 0) {
-			RDEBUG("request identifier: %s", id.key);
+			DEBUG("ratelimit: id returned from request: %s", id.key);
 			if (!ratelimit_ok(inst, id)) {
-				RINFO("access request for %s rejected due to rate-limiting", id.key);
+				log_ratelimit(id);
 				return RLM_MODULE_REJECT;
 			}
 		} else {
-			RDEBUG("neither calling_station_id nor client_IP contained in the request");
+			WARN("ratelimit: neither calling_station_id nor client_IP contained in the request");
 		}
 	}
 
