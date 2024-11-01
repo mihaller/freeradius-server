@@ -27,8 +27,7 @@ RCSID("$Id$")
 
 #include "fixedds.h"
 
-// static long current_time_in_ms(void);
-static int index_from_id(const char *id, uint32_t *index);
+static int index_from_id(RatelimitID id, uint32_t *index);
 
 void *datastore_init(uint32_t listlength) {
     BucketList *b;
@@ -46,7 +45,7 @@ void *datastore_init(uint32_t listlength) {
 /*
  * insert
  */
-Bucket *insert(void *datastore, Bucket data, const char *id) {
+Bucket *insert(void *datastore, Bucket data, RatelimitID id) {
     BucketList *list = datastore;
 	uint32_t index;
 
@@ -68,16 +67,18 @@ Bucket *insert(void *datastore, Bucket data, const char *id) {
  * lookup returns the entry in the datastore with the given id or NULL if the datastore
  * doesn't contain an entry for id.
  */
-Bucket *lookup(void *datastore, const char *id) {
+Bucket *lookup(void *datastore, RatelimitID id) {
     BucketList *list;
 	uint32_t index;
 
     list = datastore;
 
     INFO("ratelimit: Hello from datastroe lookup()()");
-	index_from_id(id, &index);
-    INFO("ratelimit: return from index_from_id() %s %d %x", id, index, index);
-    printf("ratelimt: index from id %s\n", id);
+	if (index_from_id(id, &index) == -1) {
+        return NULL;
+    }
+    INFO("ratelimit: return from index_from_id() %s %d %x", id.key, index, index);
+    printf("ratelimt: index from id %s\n", id.key);
     return &(list->buckets[index]);
 }
 
@@ -85,36 +86,43 @@ Bucket *lookup(void *datastore, const char *id) {
  * index_from_id return the left most 24 bit from mac address
  * TODO: pass in type to do a switch on.
  */
-static int index_from_id(const char *id, uint32_t *index) {
+static int index_from_id(RatelimitID id, uint32_t *index) {
     uint values[8];
     uint64_t int_val;
 
     INFO("ratelimit: index_from_id()");
 
-    /* 8 components suggests an IPv6. The last 3 octets used for the index. */
-    if (8 == sscanf(id, "%x:%x:%x:%x:%x:%x:%x:%x",
-        &values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6], &values[7])) {
-        /* convert extension ID into an integer */
-        int_val = values[5] << 16 | values[6] << 8 | values[7];
-        (*index) = int_val;
-        return 0; // Success
+    switch (id.key_type) {
+        case MACADDR:
+            /* Contains 6 components - use the last 3 octets (extension ID) as the index */
+            if (6 == sscanf(id.key, "%x:%x:%x:%x:%x:%x",
+                &values[0], &values[1], &values[2], &values[3], &values[4], &values[5])) {
+                int_val = values[3] << 16 | values[4] << 8 | values[5];
+                (*index) = int_val;
+                return 0;
+            }
+            break;
+        case IPV4:
+            /* Contains 4 components - use the last 3 octets for the index. */
+            if (4 == sscanf(id.key, "%d.%d.%d.%d", &values[0], &values[1], &values[2], &values[3])) {
+                int_val = values[1] << 16 | values[2] << 8 | values[3];
+                (*index) = int_val;
+                return 0;
+            }
+            break;
+        case IPV6:
+            /* Contains 8 octets - use last 3 octets for the index. */
+            if (8 == sscanf(id.key, "%x:%x:%x:%x:%x:%x:%x:%x",
+                &values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6], &values[7])) {
+                int_val = values[5] << 16 | values[6] << 8 | values[7];
+                (*index) = int_val;
+                return 0;
+            }
+            break;
+        case NONE:
+            break;
     }
 
-    /* 6 components suggests a MAC. The last 3 octets (extension ID) is used as the index */
-    if (6 == sscanf(id, "%x:%x:%x:%x:%x:%x", &values[0], &values[1], &values[2], &values[3], &values[4], &values[5])) {
-        /* convert extension ID into an integer */
-        int_val = values[3] << 16 | values[4] << 8 | values[5];
-        (*index) = int_val;
-        return 0; // Success
-    }
-
-    /* 4 components suggests an IPv4. The last 3 octets used for the index. */
-    if (4 == sscanf(id, "%d.%d.%d.%d", &values[0], &values[1], &values[2], &values[3])) {
-        int_val = values[1] << 16 | values[2] << 8 | values[3];
-        (*index) = int_val;
-        return 0; // Success
-    }
-
-    INFO("ratelimit: invalid id %s", id);
+    INFO("ratelimit: invalid id %s", id.key);
     return -1; // Invalid MAC address string
 }

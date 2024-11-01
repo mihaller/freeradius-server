@@ -31,11 +31,11 @@ RCSID("$Id$")
 typedef Bucket* bucketRef;
 
 static void *ratelimit_init_datastore(rlm_ratelimit_t *instance);
-static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id);
-static Bucket* get_bucket(rlm_ratelimit_t *inst, const char *id);
-static bucketRef add_bucket(rlm_ratelimit_t *inst, const char *id);
+static bool ratelimit_ok(rlm_ratelimit_t *inst, RatelimitID id);
+static Bucket* get_bucket(rlm_ratelimit_t *inst, RatelimitID id);
+static bucketRef add_bucket(rlm_ratelimit_t *inst, RatelimitID id);
 static uint64_t current_time_in_sec(void);
-static const char *id_from_request(REQUEST *request, char* buffer, uint bsize);
+static int id_from_request(RatelimitID *id, REQUEST *request, char* buffer, uint bsize);
 static uint tokens_to_add(uint64_t elapsed, uint32_t refreshrate);
 static bool valid_bucket(Bucket *b);
 static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refreshrate);
@@ -53,19 +53,19 @@ static void *ratelimit_init_datastore(rlm_ratelimit_t *instance) {
 }
 
 /*
- *  add_bucket creates a new CSID token bucket, insert it into the datastore and returns a reference to it.
+ * add_bucket creates a new CSID token bucket, insert it into the datastore and returns a reference to it.
  */
-static bucketRef add_bucket(rlm_ratelimit_t *inst, const char *id) {
+static bucketRef add_bucket(rlm_ratelimit_t *inst, RatelimitID id) {
 	Bucket b;
 
 	b.tokens = inst->tokenmax;
 	b.accessed = current_time_in_sec();
-	DEBUG("ratelimit: add_bucket() created bucket for ID %s. Total allocated buckets: %d", id, ++numbuckets);
+	DEBUG("ratelimit: add_bucket() created bucket for ID %s. Total allocated buckets: %d", id.key, ++numbuckets);
 	return insert(inst->datastore, b, id);
 }
 
 /*
- *  update_used_bucket decrements the token count and updates last access time
+ * update_used_bucket decrements the token count and updates last access time
  */
 static void update_used_bucket(Bucket *b) {
 	if (!valid_bucket(b)) {
@@ -76,8 +76,8 @@ static void update_used_bucket(Bucket *b) {
 }
 
 /*
- *  update_bucket_tokens determines if the bucket's tokens can be replenished. If so,
- *  it is replenished up to, but not exceeding, TOKENMAX.
+ * update_bucket_tokens determines if the bucket's tokens can be replenished. If so,
+ * it is replenished up to, but not exceeding, TOKENMAX.
  */
 static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refreshrate) {
 	uint nTokens;
@@ -95,7 +95,7 @@ static void update_bucket_tokens(Bucket *b, uint32_t maxtokens, uint32_t refresh
 }
 
 /*
- *  tokens_to_add returns the number of tokens to add for the elapse time for the update_period
+ * tokens_to_add returns the number of tokens to add for the elapse time for the update_period
  */
 static uint tokens_to_add(uint64_t elapsed, uint32_t refreshrate) {
 	INFO("ratelimit: tokens_to_add elapsed: %llu refreshrate %d", elapsed, refreshrate);
@@ -113,7 +113,7 @@ static bool valid_bucket(Bucket *b) {
 }
 
 /*
- *  current_time_in_sec returns the current time in seconds since UNIX Epoch.
+ * current_time_in_sec returns the current time in seconds since UNIX Epoch.
  */
 static uint64_t current_time_in_sec(void) {
     struct timespec ts;
@@ -122,61 +122,61 @@ static uint64_t current_time_in_sec(void) {
 }
 
 /*
- *  get_bucket returns a reference to the token bucket with the specified id. If the id
- *  doesn't exist a new bucket is created and a reference to the new bucket is
- *  returned.
+ * get_bucket returns a reference to the token bucket with the specified id. If the id
+ * doesn't exist a new bucket is created and a reference to the new bucket is
+ * returned.
  */
-static Bucket* get_bucket(rlm_ratelimit_t *inst, const char *id) {
+static Bucket* get_bucket(rlm_ratelimit_t *inst, RatelimitID id) {
 	Bucket *b = NULL;
 
 	b = lookup(inst->datastore, id);
 
 	/* bucket for ID doesn't exist. Add one. */
 	if (b == NULL) {
-		DEBUG("get_bucket: bucket not found. Adding bucket: %s", id);
+		DEBUG("get_bucket: bucket not found. Adding bucket: %s", id.key);
 		b = add_bucket(inst, id);
 	} else {
-		WARN("ratelimit: bucket for %s already exists", id);
+		WARN("ratelimit: bucket for %s already exists", id.key);
 
 	}
 
-	INFO("ratelimit: getbucket() %s %d %llu", id, b->tokens, b->accessed);
+	INFO("ratelimit: getbucket() %s %d %llu", id.key, b->tokens, b->accessed);
 	return b;
 }
 
 /*
- *  ratelimit_ok returns true if the rate limit hasn't been exceeded.
+ * ratelimit_ok returns true if the rate limit hasn't been exceeded.
  */
-static bool ratelimit_ok(rlm_ratelimit_t *inst, const char *id) {
+static bool ratelimit_ok(rlm_ratelimit_t *inst, RatelimitID id) {
 	Bucket *b;
 
-	DEBUG("ratelimit_ok(): Checking rate limit for %s", id);
+	DEBUG("ratelimit_ok(): Checking rate limit for %s", id.key);
 
 	b = get_bucket(inst, id);
 
-	INFO("bucket before: %s %d", id, b->tokens);
+	INFO("bucket before: %s %d", id.key, b->tokens);
 
 	update_bucket_tokens(b, inst->tokenmax, inst->refreshrate);
 	if (b->tokens <= 0) {
-		INFO("rate-limit for %s exceeded", id);
+		INFO("rate-limit for %s exceeded", id.key);
 		return false;
 	}
 
 	/* the request is within limits - update the bucket and return "OK" */
 	update_used_bucket(b);
-	INFO("bucket after: %s %d", id, b->tokens);
+	INFO("bucket after: %s %d", id.key, b->tokens);
 	return true;
 }
 
 /*
- *	Do any per-module initialization that is separate to each
- *	configured instance of the module.  e.g. set up connections
- *	to external databases, read configuration files, set up
- *	dictionary entries, etc.
+ * Do any per-module initialization that is separate to each
+ * configured instance of the module.  e.g. set up connections
+ * to external databases, read configuration files, set up
+ * dictionary entries, etc.
  *
- *	If configuration information is given in the config section
- *	that must be referenced in later calls, store a handle to it
- *	in *instance otherwise put a null pointer there.
+ * If configuration information is given in the config section
+ * that must be referenced in later calls, store a handle to it
+ * in *instance otherwise put a null pointer there.
  */
 static int mod_instantiate(UNUSED CONF_SECTION *conf, void *instance) {
 	rlm_ratelimit_t *inst = instance;
@@ -204,28 +204,28 @@ static int mod_instantiate(UNUSED CONF_SECTION *conf, void *instance) {
 
 #ifdef WITH_ACCOUNTING
 /*
- *	Massage the request before recording it or proxying it
+ * Massage the request before recording it or proxying it
  */
 static rlm_rcode_t CC_HINT(nonnull) mod_preacct(UNUSED void *instance, UNUSED REQUEST *request) {
 	return RLM_MODULE_OK;
 }
 
 /*
- *	Write accounting information to this modules database.
+ * Write accounting information to this modules database.
  */
 static rlm_rcode_t CC_HINT(nonnull) mod_accounting(UNUSED void *instance, UNUSED REQUEST *request) {
 	return RLM_MODULE_OK;
 }
 
 /*
- *	See if a user is already logged in. Sets request->simul_count to the
- *	current session count for this user and sets request->simul_mpp to 2
- *	if it looks like a multilink attempt based on the requested IP
- *	address, otherwise leaves request->simul_mpp alone.
+ * See if a user is already logged in. Sets request->simul_count to the
+ * current session count for this user and sets request->simul_mpp to 2
+ * if it looks like a multilink attempt based on the requested IP
+ * address, otherwise leaves request->simul_mpp alone.
  *
- *	Check twice. If on the first pass the user exceeds his
- *	max. number of logins, do a second pass and validate all
- *	logins by querying the terminal server (using eg. SNMP).
+ * Check twice. If on the first pass the user exceeds his
+ * max. number of logins, do a second pass and validate all
+ * logins by querying the terminal server (using eg. SNMP).
  */
 static rlm_rcode_t CC_HINT(nonnull) mod_checksimul(UNUSED void *instance, REQUEST *request) {
 	request->simul_count=0;
@@ -235,8 +235,8 @@ static rlm_rcode_t CC_HINT(nonnull) mod_checksimul(UNUSED void *instance, REQUES
 #endif
 
 /*
- *	Only free memory we allocated.  The strings allocated via
- *	cf_section_parse() do not need to be freed.
+ * Only free memory we allocated.  The strings allocated via
+ * cf_section_parse() do not need to be freed.
  */
 static int mod_detach(void *instance) {
 	rlm_ratelimit_t *inst = instance;
@@ -244,56 +244,76 @@ static int mod_detach(void *instance) {
 	talloc_free(inst->datastore);
 
 	/*
-	 *  We need to explicitly free all children, so if the driver
-	 *  parented any memory off the instance, their destructors
-	 *  run before we unload the bytecode for them.
+	 * We need to explicitly free all children, so if the driver
+	 * parented any memory off the instance, their destructors
+	 * run before we unload the bytecode for them.
 	 *
-	 *  If we don't do this, we get a SEGV deep inside the talloc code
-	 *  when it tries to call a destructor that no longer exists.
+	 * If we don't do this, we get a SEGV deep inside the talloc code
+	 * when it tries to call a destructor that no longer exists.
 	 */
 	talloc_free_children(inst);
 
 	return 0;
 }
 
-static const char *id_from_request(REQUEST *request, char *buffer, uint bsize) {
+/*
+ * id_from_request creates a RatelimitID for the request. The ID is created from the
+ * the calling_station_id attribute. If request doesn't contain a calling_station_id
+ * the ReatelimitID is created from the request's source IP address, which require
+ * the buffer and bsize arguments.
+ *
+ * Returns 0 on success or -1 on error.
+ */
+static int id_from_request(RatelimitID *id, REQUEST *request, char *buffer, uint bsize) {
 	VALUE_PAIR *vp;
-	const char *id = NULL;
+	const char *ip;
 
+	/* create the ID from the calling_station_id if present */
 	vp = fr_pair_find_by_num(request->packet->vps, PW_CALLING_STATION_ID, 0, TAG_ANY);
 	if (vp) {
-		RDEBUG("request identifier: %s", vp->vp_strvalue);
-		id = vp->vp_strvalue;
-	} else {
-		RDEBUG("calling_station_id not in request. Falling back to client IP");
-		id = inet_ntop(request->packet->src_ipaddr.af, &request->packet->src_ipaddr.ipaddr, buffer, bsize);
+		id->key = vp->vp_strvalue;
+		id->key_type = MACADDR;
+		return 0;
 	}
 
-	return id;
+	/* no calling_station_id attribute so fall back to using the src_ip (ipv4 or ipv6) */
+	ip = inet_ntop(request->packet->src_ipaddr.af, &request->packet->src_ipaddr.ipaddr, buffer, bsize);
+	if (ip) {
+		id->key = ip;
+		if (request->packet->src_ipaddr.af == AF_INET) {
+			id->key_type = IPV4;
+		} else if (request->packet->src_ipaddr.af == AF_INET6) {
+			id->key_type = IPV6;
+		} else {
+			id->key_type = NONE;
+		}
+		return 0;
+	}
+
+	return -1;
 }
 
 /*
- *	Retrieve the calling_station_id from the request and return a RLM_MODULE_REJECT if the
- *  request for this session exceeds the rate limit.
- *  Return OK/NOP if the request doesn't contain a calling_station_id.
+ * Retrieve the calling_station_id from the request and return a RLM_MODULE_REJECT if the
+ * request for this session exceeds the rate limit.
+ * Return OK/NOP if the request doesn't contain a calling_station_id.
  */
 static rlm_rcode_t CC_HINT(nonnull) mod_pre_proxy(void *instance, REQUEST *request) {
 	rlm_ratelimit_t *inst = instance;
-	const char *id;
+	int ok;
+	RatelimitID id;
 
 	RDEBUG2("mod_pre_proxy()");
 
-    /*
-	 *  retrieve the calling_station_id from the request.
-	 */
+    /* retrieve the calling_station_id from the request */
 	if (request->packet->code == PW_CODE_ACCESS_REQUEST) {
 		char buffer[128];
-		id = id_from_request(request, buffer, sizeof(buffer));
-		INFO("ratelimit: id returned from request: %s", id);
-		if (id != NULL) {
-			RDEBUG("request identifier: %s", id);
+		ok = id_from_request(&id, request, buffer, sizeof(buffer));
+		INFO("ratelimit: id returned from request: %s", id.key);
+		if (ok == 0) {
+			RDEBUG("request identifier: %s", id.key);
 			if (!ratelimit_ok(inst, id)) {
-				RINFO("access request for %s rejected due to rate-limiting", id);
+				RINFO("access request for %s rejected due to rate-limiting", id.key);
 				return RLM_MODULE_REJECT;
 			}
 		} else {
@@ -306,13 +326,13 @@ static rlm_rcode_t CC_HINT(nonnull) mod_pre_proxy(void *instance, REQUEST *reque
 }
 
 /*
- *	The module name should be the only globally exported symbol.
- *	That is, everything else should be 'static'.
+ * The module name should be the only globally exported symbol.
+ * That is, everything else should be 'static'.
  *
- *	If the module needs to temporarily modify it's instantiation
- *	data, the type should be changed to RLM_TYPE_THREAD_UNSAFE.
- *	The server will then take care of ensuring that the module
- *	is single-threaded.
+ * If the module needs to temporarily modify it's instantiation
+ * data, the type should be changed to RLM_TYPE_THREAD_UNSAFE.
+ * The server will then take care of ensuring that the module
+ * is single-threaded.
  */
 extern module_t rlm_ratelimit;
 module_t rlm_ratelimit = {

@@ -27,6 +27,13 @@ RCSIDH(fixedds_h, "$Id$")
 
 #include <freeradius-devel/radiusd.h>
 
+enum IDType { NONE, MACADDR, IPV4, IPV6 };
+
+typedef struct RatelimitID {
+    const char *key;
+    enum IDType key_type;
+} RatelimitID;
+
 typedef struct Bucket {
     uint8_t tokens;
     uint64_t accessed;
@@ -37,5 +44,5 @@ typedef struct BucketList {
 } BucketList;
 
 void *datastore_init(uint32_t listlength);
-Bucket *insert(void *datastore, Bucket data, const char *id);
-Bucket *lookup(void *datastore, const char *id);
+Bucket *insert(void *datastore, Bucket data, RatelimitID id);
+Bucket *lookup(void *datastore, RatelimitID id);
